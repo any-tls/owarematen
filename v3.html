@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>一致するまで終われまテン - Ultimate</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Mochiy+Pop+One&family=Nunito:wght@700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        :root {
+            --kahoot-purple: #46178f;
+            --kahoot-blue: #1368ce;
+            --match-red: #e21b3c; /* 一致時の赤 */
+            --mismatch-blue: #1368ce; /* 不一致時の青 */
+            --gold: #ffa602;
+        }
+        body {
+            font-family: 'Mochiy Pop One', sans-serif;
+            background-color: #f2f2f2;
+            overflow: hidden;
+            touch-action: pan-x pan-y;
+        }
+        .bg-pattern {
+            background-color: var(--kahoot-purple);
+            background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%235c24b3' fill-opacity='0.4'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+        }
+        
+        /* 配信モード */
+        .streamer-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            background: #1a1a1a;
+        }
+        .streamer-frame {
+            width: 1280px;
+            height: 720px;
+            background: var(--kahoot-purple);
+            position: relative;
+            overflow: hidden;
+            border: 4px solid var(--gold);
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            flex-shrink: 0;
+        }
+        .streamer-safe-area {
+            color: white;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 1.5rem;
+            text-align: center;
+        }
+        .normal-wrapper {
+            height: 100vh;
+            width: 100vw;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* 共通UI */
+        canvas { touch-action: none; cursor: crosshair; background: white; border-radius: 8px; }
+        .color-btn { position: relative; transition: transform 0.1s; }
+        .color-btn:active { transform: scale(0.9); }
+        .color-check {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: white; text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+        }
+        .animate-pop { animation: popIn 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
+        @keyframes popIn { 0% { transform: scale(0.5); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+        
+        .btn-push { transition: all 0.1s; box-shadow: 0 4px 0 rgba(0,0,0,0.2); }
+        .btn-push:active { transform: translateY(4px); box-shadow: 0 0 0 rgba(0,0,0,0.2); }
+
+        /* 結果画面の色設定 */
+        .bg-match { background-color: var(--match-red); }
+        .bg-mismatch { background-color: var(--mismatch-blue); }
+    </style>
+</head>
+<body class="text-gray-800" @dragover.prevent @drop.prevent>
+
+<div id="app" class="h-full w-full" @drop.prevent="handleGlobalDrop" @dragover.prevent>
+    <div class="fixed inset-0 bg-pattern -z-10"></div>
+
+    <div :class="streamerMode ? 'streamer-wrapper' : 'normal-wrapper'">
+        
+        <div v-if="streamerMode && roomCode" class="streamer-safe-area">
+            <span class="bg-indigo-600 px-4 py-2 rounded-lg">ROOM ID: {{ roomCode }}</span>
+            <button @click="toggleStreamerMode" class="ml-4 text-sm bg-gray-700 px-3 py-1 rounded">配信モードOFF</button>
+        </div>
+
+        <div :class="streamerMode ? 'streamer-frame' : 'flex-1 flex flex-col relative w-full h-full overflow-hidden'" class="bg-white/10 backdrop-blur-sm transition-all duration-300">
+            
+            <div class="bg-white/90 p-3 shadow-md flex justify-between items-center z-20 shrink-0">
+                <h1 class="text-lg md:text-xl font-bold text-indigo-800 truncate"><i class="fas fa-pen-fancy"></i> 一致するまで終われまテン</h1>
+                <div class="flex gap-2 items-center flex-shrink-0">
+                    <button v-if="isHost && !streamerMode" @click="toggleStreamerMode" class="text-xs bg-gray-800 text-white px-2 py-1 rounded btn-push">
+                        <i class="fas fa-video"></i> 配信モード
+                    </button>
+                    <span v-if="roomCode && !streamerMode" class="bg-indigo-600 text-white px-3 py-1 rounded-full font-mono font-bold text-sm">ID: {{ roomCode }}</span>
+                </div>
+            </div>
+
+            <div v-if="scene === 'home'" class="flex-1 flex flex-col justify-center items-center p-4 gap-6 animate-pop overflow-y-auto">
+                <div class="bg-white p-8 rounded-2xl shadow-xl text-center max-w-md w-full border-b-8 border-indigo-200">
+                    <h2 class="text-2xl md:text-3xl font-bold mb-6 text-indigo-700">GAME START</h2>
+                    <div class="grid grid-cols-1 gap-4">
+                        <button @click="setupHost" class="bg-indigo-600 hover:bg-indigo-700 text-white py-4 rounded-xl font-bold text-lg btn-push w-full">
+                            部屋を作る (Host)
+                        </button>
+                        <button @click="scene = 'join_room_id'" class="bg-green-500 hover:bg-green-600 text-white py-4 rounded-xl font-bold text-lg btn-push w-full">
+                            部屋に入る (Player)
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div v-if="scene === 'host_setup'" class="flex-1 flex flex-col p-4 overflow-y-auto">
+                <div class="bg-white p-6 rounded-2xl shadow-xl max-w-2xl w-full mx-auto animate-pop my-auto">
+                    <h3 class="text-xl font-bold mb-4 border-b pb-2">ルーム設定</h3>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-bold mb-1">回答・判定モード</label>
+                            <div class="flex gap-2">
+                                <button @click="config.inputMode = 'both'" :class="config.inputMode === 'both' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'" class="flex-1 py-2 rounded-lg font-bold transition border-2 border-transparent">
+                                    <i class="fas fa-palette"></i> お絵かき + テキスト
+                                </button>
+                                <button @click="config.inputMode = 'text'" :class="config.inputMode === 'text' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'" class="flex-1 py-2 rounded-lg font-bold transition border-2 border-transparent">
+                                    <i class="fas fa-font"></i> テキストのみ (AI判定可)
+                                </button>
+                            </div>
+                        </div>
+
+                        <div v-if="config.inputMode === 'text'" class="bg-gray-50 p-3 rounded-lg border border-indigo-100">
+                            <label class="block text-sm font-bold mb-1">Groq API Key <span class="text-xs font-normal text-gray-500">(任意 / 自動判定用)</span></label>
+                            <input type="password" v-model="config.apiKey" placeholder="gsk_..." class="w-full p-2 border rounded text-sm font-mono">
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-bold mb-1">問題リスト <span class="text-xs font-normal text-gray-500">(ドラッグ&ドロップ可)</span></label>
+                            <textarea v-model="rawQuestionText" class="w-full h-24 p-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 text-sm" placeholder="ラーメンの味といえば？, 好きなおにぎりの具は？"></textarea>
+                            <div class="flex gap-2 mt-1">
+                                <label class="cursor-pointer bg-gray-200 px-3 py-1 rounded text-xs font-bold hover:bg-gray-300">
+                                    ファイル読込 <input type="file" class="hidden" accept=".txt" @change="handleFileSelect">
+                                </label>
+                                <button @click="loadDefaultQuestions" class="bg-yellow-100 text-yellow-800 px-3 py-1 rounded text-xs font-bold hover:bg-yellow-200">公式問題ロード</button>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-between">
+                            <span class="font-bold text-sm">出題順序</span>
+                            <div class="flex bg-gray-200 rounded-lg p-1 text-xs">
+                                <button @click="config.order = 'random'" :class="config.order === 'random' ? 'bg-white shadow text-indigo-600' : 'text-gray-500'" class="px-3 py-1 rounded font-bold">ランダム</button>
+                                <button @click="config.order = 'sequential'" :class="config.order === 'sequential' ? 'bg-white shadow text-indigo-600' : 'text-gray-500'" class="px-3 py-1 rounded font-bold">順番通り</button>
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="block text-sm font-bold mb-1">目標一致回数</label>
+                            <input type="number" v-model.number="config.targetMatches" class="w-20 p-2 border rounded text-center" min="1" max="50">
+                        </div>
+
+                        <button @click="createRoom" class="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold btn-push mt-2">部屋を作成</button>
+                        <button @click="scene = 'home'" class="w-full text-gray-500 py-2">戻る</button>
+                    </div>
+                </div>
+            </div>
+
+            <div v-if="scene === 'join_room_id'" class="flex-1 flex justify-center items-center p-4">
+                <div class="bg-white p-6 rounded-2xl shadow-xl max-w-sm w-full animate-pop">
+                    <h3 class="text-xl font-bold mb-4">部屋IDを入力</h3>
+                    <input v-model="joinRoomId" @keyup.enter="connectToRoom" type="tel" maxlength="6" placeholder="123456" class="w-full p-4 text-3xl text-center font-mono tracking-widest border-2 border-gray-200 rounded-xl mb-4 focus:border-green-500 outline-none">
+                    <button @click="connectToRoom" class="w-full bg-green-500 text-white py-3 rounded-xl font-bold btn-push">次へ</button>
+                    <button @click="scene = 'home'" class="w-full text-gray-500 py-2 mt-2">戻る</button>
+                </div>
+            </div>
+            <div v-if="scene === 'join_name'" class="flex-1 flex justify-center items-center p-4">
+                <div class="bg-white p-6 rounded-2xl shadow-xl max-w-sm w-full animate-pop">
+                    <h3 class="text-xl font-bold mb-4">ニックネーム</h3>
+                    <input v-model="playerName" @keyup.enter="enterLobby" placeholder="名前を入力" class="w-full p-4 text-xl text-center border-2 border-gray-200 rounded-xl mb-4 focus:border-green-500 outline-none">
+                    <button @click="enterLobby" class="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold btn-push">参加する！</button>
+                </div>
+            </div>
+
+            <div v-if="scene === 'lobby'" class="flex-1 p-6 flex flex-col items-center overflow-y-auto">
+                <div class="bg-white/90 p-4 rounded-xl shadow-lg mb-6 text-center w-full max-w-2xl animate-pop">
+                    <p class="text-gray-500 font-bold mb-2">{{ isHost ? '参加者待機中...' : 'ホストの開始を待っています...' }}</p>
+                    <div class="flex flex-wrap gap-2 justify-center bg-gray-100 p-4 rounded-lg min-h-[100px] content-start">
+                        <span v-for="p in participants" :key="p.id" class="bg-white px-3 py-1 rounded-full shadow font-bold text-indigo-800 animate-pop">
+                            {{ p.name }}
+                        </span>
+                    </div>
+                </div>
+                <button v-if="isHost" @click="startGame" class="bg-indigo-600 text-white px-12 py-4 rounded-full font-bold text-xl shadow-lg btn-push animate-pulse">ゲームスタート！</button>
+            </div>
+
+            <div v-if="scene === 'game_question'" class="flex-1 flex flex-col w-full h-full overflow-hidden">
+                <div class="bg-indigo-900 text-white p-4 text-center shrink-0 shadow-lg z-10">
+                    <p class="text-xs opacity-80">お題 {{ currentRound }}</p>
+                    <h2 class="text-2xl md:text-4xl font-black">{{ currentTopic }}</h2>
+                </div>
+
+                <div v-if="isHost" class="flex-1 flex flex-col items-center justify-center p-4 bg-gray-100">
+                    <div class="text-6xl font-mono font-bold text-indigo-600 mb-4">
+                        {{ Object.keys(answers).length }} / {{ Object.keys(participants).length }}
+                    </div>
+                    <p class="text-xl text-gray-600 font-bold mb-8">回答待機中...</p>
+                    <button @click="startJudging" class="bg-yellow-400 text-indigo-900 px-10 py-4 rounded-full font-bold text-2xl btn-push shadow-xl border-4 border-yellow-200">
+                        締め切って判定！
+                    </button>
+                </div>
+
+                <div v-else class="flex-1 flex flex-col items-center p-2 overflow-y-auto w-full">
+                    <div v-if="!hasAnswered" class="w-full max-w-md flex flex-col items-center gap-4 py-2">
+                        <div v-if="config.inputMode === 'both'" class="bg-white rounded-xl shadow-lg p-2 w-full">
+                            <div class="flex justify-between items-center mb-2 px-1">
+                                <span class="text-xs font-bold text-gray-400"><i class="fas fa-paintbrush"></i> 手書き</span>
+                                <button @click="clearCanvas" class="text-xs bg-gray-200 hover:bg-gray-300 px-3 py-1 rounded text-gray-700 font-bold"><i class="fas fa-trash"></i> クリア</button>
+                            </div>
+                            <div ref="canvasContainer" class="w-full h-48 md:h-64 border bg-white rounded touch-none relative cursor-crosshair overflow-hidden">
+                                <canvas ref="drawCanvas" class="absolute inset-0 w-full h-full"></canvas>
+                            </div>
+                        </div>
+
+                        <div v-if="config.inputMode === 'both'" class="flex flex-wrap gap-2 justify-center w-full max-w-sm">
+                            <button v-for="c in colors" :key="c.val" @click="setPenColor(c.val)" 
+                                class="w-8 h-8 rounded-full border-2 border-white shadow color-btn"
+                                :style="{backgroundColor: c.val}">
+                                <i v-if="penColor === c.val" class="fas fa-check color-check"></i>
+                            </button>
+                        </div>
+
+                        <div class="w-full">
+                            <input v-model="myAnswerText" @keyup.enter="submitAnswer" placeholder="テキストで回答" class="w-full p-4 border-2 border-gray-300 rounded-xl focus:border-indigo-500 outline-none text-lg text-center">
+                        </div>
+
+                        <button @click="submitAnswer" class="bg-indigo-600 text-white w-full py-4 rounded-xl font-bold text-xl btn-push mt-2">回答を送信</button>
+                    </div>
+                    <div v-else class="flex-1 flex flex-col items-center justify-center animate-pop text-center">
+                        <div class="text-6xl text-green-500 mb-4"><i class="fas fa-check-circle"></i></div>
+                        <h3 class="text-2xl font-bold">送信完了！</h3>
+                        <p class="text-gray-500">ホストの進行を待っています...</p>
+                    </div>
+                </div>
+            </div>
+
+            <div v-if="scene === 'judging'" class="flex-1 flex flex-col p-2 overflow-hidden bg-gray-100">
+                <div class="flex justify-between items-center p-3 bg-white shadow-sm z-10 shrink-0">
+                    <h2 class="font-bold text-indigo-800">回答確認中...</h2>
+                    <div v-if="isHost" class="flex gap-2">
+                        <button @click="showRoundResult(false)" class="bg-blue-600 text-white px-4 py-2 rounded-lg font-bold btn-push text-sm">不一致 (青)</button>
+                        <button @click="showRoundResult(true)" class="bg-red-600 text-white px-4 py-2 rounded-lg font-bold btn-push text-sm">全員一致 (赤)</button>
+                    </div>
+                </div>
+                <div class="flex-1 overflow-y-auto p-2">
+                    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 pb-20">
+                        <div v-for="(ans, pid) in answers" :key="pid" class="bg-white rounded-xl shadow p-2 flex flex-col items-center min-h-[150px] animate-pop border-4 border-white relative">
+                            <div v-if="isHost && ans.aiCorrect !== undefined" 
+                                 class="absolute top-1 right-1 px-2 py-1 rounded text-xs font-bold text-white shadow z-10"
+                                 :class="ans.aiCorrect ? 'bg-green-500' : 'bg-red-500'">
+                                AI: {{ ans.aiCorrect ? '〇' : '×' }}
+                            </div>
+                            
+                            <div class="flex-1 flex items-center justify-center w-full overflow-hidden p-1">
+                                <img v-if="ans.image" :src="ans.image" class="max-w-full max-h-[120px] object-contain">
+                                <div v-else class="text-xl font-bold text-center break-words w-full">{{ ans.text }}</div>
+                            </div>
+                            <div class="mt-1 text-xs font-bold text-gray-500 bg-gray-100 px-2 py-1 rounded-full">{{ participants[pid]?.name }}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div v-if="scene === 'round_result'" class="flex-1 flex flex-col p-4 text-white animate-pop overflow-hidden" 
+                 :class="lastRoundResult ? 'bg-match' : 'bg-mismatch'">
+                
+                <div class="text-center mb-6 shrink-0">
+                    <h2 class="text-4xl md:text-6xl font-black drop-shadow-md mb-2">
+                        {{ lastRoundResult ? '一致！！' : '不一致...' }}
+                    </h2>
+                    <p class="text-xl font-bold opacity-90">現在の一致数: {{ currentMatches }} / {{ config.targetMatches }}</p>
+                </div>
+
+                <div class="flex-1 overflow-y-auto w-full">
+                    <div class="flex flex-wrap justify-center gap-4">
+                        <div v-for="(ans, pid) in answers" :key="pid" class="bg-white/20 backdrop-blur-md rounded-lg p-3 min-w-[120px] max-w-[200px] flex flex-col items-center shadow-lg">
+                            <span class="font-bold mb-2 text-sm">{{ participants[pid]?.name }}</span>
+                            <div v-if="ans.image" class="bg-white rounded p-1 w-full flex justify-center"><img :src="ans.image" class="max-h-[80px]"></div>
+                            <div v-else class="text-xl font-black">{{ ans.text }}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="isHost" class="flex justify-center mt-4 shrink-0">
+                    <button @click="nextRound" class="bg-white text-gray-900 px-8 py-3 rounded-full font-bold text-xl btn-push shadow-xl">
+                        次の問題へ <i class="fas fa-arrow-right"></i>
+                    </button>
+                </div>
+                <div v-else class="text-center mt-4 animate-pulse">ホストが次へ進むのを待っています...</div>
+            </div>
+
+            <div v-if="scene === 'result'" class="flex-1 flex flex-col justify-center items-center p-4 bg-indigo-900 text-white">
+                <div class="animate-pop text-center">
+                    <h2 class="text-4xl md:text-6xl font-black mb-4 text-yellow-400 drop-shadow-md">CONGRATULATIONS!</h2>
+                    <p class="text-xl mb-8">全ての心が一つになりました！</p>
+                    <button v-if="isHost" @click="resetGame" class="bg-white text-indigo-900 px-8 py-3 rounded-full font-bold text-xl btn-push hover:bg-gray-100">
+                        タイトルに戻る (全員)
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script>
+const { createApp, ref, reactive, nextTick } = Vue;
+
+createApp({
+    setup() {
+        // --- State ---
+        const scene = ref('home'); 
+        const streamerMode = ref(false);
+        const isHost = ref(false);
+        const roomCode = ref('');
+        const joinRoomId = ref('');
+        const playerName = ref('');
+        const myPeerId = ref('');
+        
+        // Data
+        const participants = reactive({}); // { peerId: { name } }
+        const answers = reactive({}); 
+        const config = reactive({ order: 'random', targetMatches: 10, inputMode: 'both', apiKey: '' });
+        const rawQuestionText = ref('');
+        const questionQueue = ref([]);
+        
+        // Game Progress
+        const currentTopic = ref('');
+        const currentRound = ref(0);
+        const currentMatches = ref(0);
+        const lastRoundResult = ref(false); // true=match, false=mismatch
+        const hasAnswered = ref(false);
+        const myAnswerText = ref('');
+        
+        // Canvas & Color
+        const canvasContainer = ref(null);
+        const drawCanvas = ref(null);
+        const penColor = ref('#000000');
+        const colors = [
+            { val: '#000000' }, { val: '#e21b3c' }, { val: '#1368ce' }, { val: '#facc15' },
+            { val: '#22c55e' }, { val: '#f97316' }, { val: '#a855f7' }, { val: '#9ca3af' }, { val: '#fdba74' }
+        ];
+        let ctx = null, isDrawing = false, lastX = 0, lastY = 0;
+        
+        // PeerJS
+        let peer = null, connections = {};
+
+        // --- Host Setup ---
+        const setupHost = () => {
+            isHost.value = true;
+            scene.value = 'host_setup';
+            loadDefaultQuestions();
+        };
+
+        const loadDefaultQuestions = () => {
+            if(!rawQuestionText.value) {
+                rawQuestionText.value = "ラーメンの味といえば？,好きなおにぎりの具は？,きのこ派？たけのこ派？,お金持ちといえば？,山といえば？,スマホといえば？,夏休みの宿題はいつやる？,目玉焼きには何をかける？,カレーの具といえば？,寿司のネタといえば？";
+            }
+        };
+
+        const handleFileSelect = (e) => {
+            const file = e.target.files[0];
+            if(file) readFile(file);
+        };
+        const handleGlobalDrop = (e) => {
+            if(scene.value !== 'host_setup') return;
+            const file = e.dataTransfer.files[0];
+            if(file && file.type.startsWith('text')) readFile(file);
+        };
+        const readFile = (file) => {
+            const r = new FileReader();
+            r.onload = (e) => {
+                const t = e.target.result;
+                rawQuestionText.value = (rawQuestionText.value ? rawQuestionText.value + "\n" : "") + t;
+            };
+            r.readAsText(file);
+        };
+
+        const createRoom = async () => {
+            let qs = rawQuestionText.value.split(/[,,\n]/).map(s => s.trim()).filter(s => s);
+            if(qs.length === 0) return alert('問題を登録してください');
+            questionQueue.value = qs;
+            
+            const code = Math.floor(100000 + Math.random() * 900000).toString();
+            roomCode.value = code;
+            await initPeer(`k10app-${code}`);
+            scene.value = 'lobby';
+        };
+
+        // --- Join & Network ---
+        const connectToRoom = async () => {
+            if (joinRoomId.value.length !== 6) return alert('6桁のIDを入力してください');
+            await initPeer();
+            const conn = peer.connect(`k10app-${joinRoomId.value}`);
+            conn.on('open', () => {
+                connections['host'] = conn;
+                scene.value = 'join_name';
+                conn.on('data', handleClientData);
+                conn.on('close', () => alert('ホストとの接続が切れました'));
+            });
+            conn.on('error', () => { alert('部屋が見つかりません'); scene.value = 'join_room_id'; });
+        };
+
+        const enterLobby = () => {
+            if(!playerName.value) return alert('名前を入力してください');
+            connections['host'].send({ type: 'JOIN', name: playerName.value });
+            scene.value = 'lobby';
+        };
+
+        const initPeer = (id = null) => {
+            return new Promise((resolve) => {
+                peer = new Peer(id, { debug: 1 });
+                peer.on('open', (id) => { myPeerId.value = id; resolve(id); });
+                peer.on('connection', (conn) => {
+                    if(!isHost.value) return; 
+                    conn.on('data', (data) => {
+                        if(data.type === 'JOIN') {
+                            participants[conn.peer] = { name: data.name };
+                            connections[conn.peer] = conn;
+                            broadcastState();
+                        }
+                        if(data.type === 'ANSWER') answers[conn.peer] = data.answer;
+                    });
+                    conn.on('close', () => {
+                        delete participants[conn.peer];
+                        delete connections[conn.peer];
+                        broadcastState();
+                    });
+                });
+            });
+        };
+
+        const broadcast = (data) => { for(let id in connections) connections[id].send(data); };
+        const broadcastState = () => {
+            if(!isHost.value) return;
+            broadcast({ type: 'STATE_UPDATE', participants: participants, roomCode: roomCode.value });
+        };
+
+        const handleClientData = (data) => {
+            if(data.type === 'STATE_UPDATE') {
+                Object.assign(participants, data.participants);
+                roomCode.value = data.roomCode;
+            }
+            if(data.type === 'START_ROUND') {
+                currentTopic.value = data.topic;
+                Object.assign(config, data.config);
+                currentRound.value = data.round;
+                currentMatches.value = data.matches;
+                scene.value = 'game_question';
+                hasAnswered.value = false;
+                myAnswerText.value = '';
+                if(config.inputMode === 'both') nextTick(initCanvas);
+            }
+            if(data.type === 'START_JUDGING') {
+                Object.assign(answers, data.answers);
+                scene.value = 'judging';
+            }
+            if(data.type === 'ROUND_RESULT') {
+                lastRoundResult.value = data.isMatch;
+                currentMatches.value = data.matches;
+                Object.assign(answers, data.answers); // Sync again to show images in result
+                scene.value = 'round_result';
+            }
+            if(data.type === 'GAME_END') scene.value = 'result';
+            if(data.type === 'RESET') location.reload();
+        };
+
+        // --- Game Flow (Host) ---
+        const startGame = () => {
+            currentMatches.value = 0;
+            currentRound.value = 0;
+            nextRound();
+        };
+
+        const nextRound = () => {
+            if(questionQueue.value.length === 0) loadDefaultQuestions(); // simple loop
+            let qIndex = config.order === 'random' ? Math.floor(Math.random() * questionQueue.value.length) : (currentRound.value % questionQueue.value.length);
+            currentTopic.value = questionQueue.value[qIndex];
+            currentRound.value++;
+            for(let k in answers) delete answers[k];
+
+            broadcast({
+                type: 'START_ROUND',
+                topic: currentTopic.value,
+                config: config,
+                round: currentRound.value,
+                matches: currentMatches.value
+            });
+            scene.value = 'game_question';
+        };
+
+        const startJudging = async () => {
+            // AI Check if Text Mode & API Key exists
+            if(config.inputMode === 'text' && config.apiKey) {
+                for(const pid in answers) {
+                    await checkWithAI(pid, answers[pid].text, currentTopic.value);
+                }
+            }
+            broadcast({ type: 'START_JUDGING', answers: answers });
+            scene.value = 'judging';
+        };
+
+        const checkWithAI = async (pid, text, topic) => {
+            try {
+                const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${config.apiKey}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        model: "llama3-8b-8192",
+                        messages: [{role: "system", content: `Quiz Judge. Topic: "${topic}". Is answer "${text}" generally considered correct/relevant? Reply JSON {"isCorrect": true/false}.`}],
+                        response_format: { type: "json_object" }
+                    })
+                });
+                const data = await res.json();
+                answers[pid].aiCorrect = JSON.parse(data.choices[0].message.content).isCorrect;
+            } catch(e) { console.error(e); }
+        };
+
+        const showRoundResult = (isMatch) => {
+            lastRoundResult.value = isMatch;
+            if(isMatch) currentMatches.value++;
+            
+            // Broadcast Result Screen
+            broadcast({
+                type: 'ROUND_RESULT',
+                isMatch: isMatch,
+                matches: currentMatches.value,
+                answers: answers
+            });
+            scene.value = 'round_result';
+
+            if(isMatch && currentMatches.value >= config.targetMatches) {
+                setTimeout(() => {
+                    broadcast({ type: 'GAME_END' });
+                    scene.value = 'result';
+                }, 3000);
+            }
+        };
+
+        const resetGame = () => {
+            if(confirm('全員をタイトルに戻しますか？')) {
+                broadcast({ type: 'RESET' });
+                location.reload();
+            }
+        };
+
+        // --- Drawing & Input ---
+        const initCanvas = () => {
+            if(!drawCanvas.value) return;
+            const r = canvasContainer.value.getBoundingClientRect();
+            drawCanvas.value.width = r.width;
+            drawCanvas.value.height = r.height;
+            ctx = drawCanvas.value.getContext('2d');
+            ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.lineWidth = 3; ctx.strokeStyle = penColor.value;
+            
+            const getPos = (e) => {
+                const rect = drawCanvas.value.getBoundingClientRect();
+                const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+                const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+                return { x: clientX - rect.left, y: clientY - rect.top };
+            };
+            const start = (e) => { isDrawing = true; const p = getPos(e); lastX = p.x; lastY = p.y; };
+            const move = (e) => {
+                if(!isDrawing) return; e.preventDefault();
+                const p = getPos(e);
+                ctx.beginPath(); ctx.moveTo(lastX, lastY); ctx.lineTo(p.x, p.y); ctx.stroke();
+                lastX = p.x; lastY = p.y;
+            };
+            const end = () => isDrawing = false;
+            
+            drawCanvas.value.addEventListener('mousedown', start);
+            drawCanvas.value.addEventListener('mousemove', move);
+            drawCanvas.value.addEventListener('mouseup', end);
+            drawCanvas.value.addEventListener('touchstart', start, {passive:false});
+            drawCanvas.value.addEventListener('touchmove', move, {passive:false});
+            drawCanvas.value.addEventListener('touchend', end);
+        };
+
+        const setPenColor = (c) => { penColor.value = c; if(ctx) ctx.strokeStyle = c; };
+        const clearCanvas = () => { if(ctx) ctx.clearRect(0,0,drawCanvas.value.width, drawCanvas.value.height); };
+
+        const submitAnswer = () => {
+            let image = null;
+            if(config.inputMode === 'both' && drawCanvas.value) {
+                const px = ctx.getImageData(0,0,drawCanvas.value.width, drawCanvas.value.height).data;
+                if(px.some(p => p !== 0)) image = drawCanvas.value.toDataURL('image/png');
+            }
+            if(!image && !myAnswerText.value) return alert('回答を入力してください');
+            
+            connections['host'].send({
+                type: 'ANSWER',
+                answer: { text: myAnswerText.value, image: image }
+            });
+            hasAnswered.value = true;
+        };
+
+        const toggleStreamerMode = () => streamerMode.value = !streamerMode.value;
+
+        return {
+            scene, streamerMode, isHost, roomCode, joinRoomId, playerName, participants,
+            rawQuestionText, config, currentTopic, answers, hasAnswered, myAnswerText,
+            drawCanvas, canvasContainer, penColor, colors, currentMatches, currentRound,
+            lastRoundResult,
+            setupHost, loadDefaultQuestions, handleFileSelect, handleGlobalDrop, createRoom,
+            connectToRoom, enterLobby, startGame, startJudging, showRoundResult, nextRound, resetGame,
+            initCanvas, setPenColor, clearCanvas, submitAnswer, toggleStreamerMode
+        };
+    }
+}).mount('#app');
+</script>
+</body>
+</html>
